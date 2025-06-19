@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # =======================
 # Config MikroTik
 # =======================
-MIKROTIK_HOST = os.getenv('MIKROTIK_HOST', 'https://941b-200-68-173-6.ngrok-free.app ')
+MIKROTIK_HOST = os.getenv('MIKROTIK_HOST', '941b-200-68-173-6.ngrok-free.app ')
 USERNAME = os.getenv('MIKROTIK_USER', 'admin')
 PASSWORD = os.getenv('MIKROTIK_PASSWORD', '1234567890')
 REQUEST_TIMEOUT = 10
