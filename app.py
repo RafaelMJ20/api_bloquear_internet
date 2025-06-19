@@ -8,7 +8,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuración MikroTik
-MIKROTIK_API_HOST = '192.168.88.1'
+MIKROTIK_API_HOST = 'https://49c0-2605-59c8-74d2-e610-00-c8b.ngrok-free.app'
 USERNAME = 'admin'
 PASSWORD = '1234567890'
 API_PORT = 8728
