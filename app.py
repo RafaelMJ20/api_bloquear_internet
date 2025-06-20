@@ -1,128 +1,101 @@
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-from requests.auth import HTTPBasicAuth
-import requests
+from librouteros import connect
 import logging
 import os
-import sys
-import datetime
 
-# =======================
-# Configuración general
-# =======================
 app = Flask(__name__)
-CORS(app)  # Habilita CORS
+CORS(app)  # Permite CORS para todos los dominios
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+# Configuración desde variables de entorno
+MIKROTIK_API_HOST = os.getenv('MIKROTIK_API_HOST', 'https://f12c-2605-59c8-74d2-e610-00-c8b.ngrok-free.app')
+USERNAME = os.getenv('MIKROTIK_USERNAME', 'admin')
+PASSWORD = os.getenv('MIKROTIK_PASSWORD', '1234567890')
+API_PORT = int(os.getenv('MIKROTIK_API_PORT', '8728'))
+
+# Configuración de logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# =======================
-# Config MikroTik
-# =======================
-MIKROTIK_HOST = os.getenv('MIKROTIK_HOST', '941b-200-68-173-6.ngrok-free.app ')
-USERNAME = os.getenv('MIKROTIK_USER', 'admin')
-PASSWORD = os.getenv('MIKROTIK_PASSWORD', '1234567890')
-REQUEST_TIMEOUT = 10
-
-# =======================
-# Verificación conexión MikroTik
-# =======================
-def verify_mikrotik_connection():
-    test_url = f"{MIKROTIK_HOST}/rest/system/resource"
+def get_api_connection():
+    """Establece conexión con MikroTik"""
     try:
-        logger.info(f"Verificando conexión con MikroTik en: {MIKROTIK_HOST}")
-        response = requests.get(test_url, auth=HTTPBasicAuth(USERNAME, PASSWORD), timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        logger.info("Conexión exitosa con MikroTik")
-        return True
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error al conectar con MikroTik: {str(e)}")
-        return False
+        connection = connect(
+            username=USERNAME,
+            password=PASSWORD,
+            host=MIKROTIK_API_HOST,
+            port=API_PORT
+        )
+        logger.info("Conexión exitosa a MikroTik")
+        return connection
+    except Exception as e:
+        logger.error(f"Error de conexión: {str(e)}")
+        raise
 
-# =======================
-# Ruta de bloqueo/desbloqueo
-# =======================
 @app.route('/internet', methods=['POST'])
-def controlar_internet_por_ip():
+def control_internet():
+    """
+    Controla acceso a internet por IP
+    Body JSON esperado:
+    {
+        "ip_address": "192.168.88.100",
+        "accion": "bloquear"  # o "permitir"
+    }
+    """
     data = request.get_json()
+    
+    # Validaciones básicas
+    if not data:
+        return jsonify({'error': 'Datos JSON requeridos'}), 400
+    
     ip = data.get('ip_address')
     accion = data.get('accion')
-
-    if not ip or accion not in ['bloquear', 'permitir']:
-        return jsonify({'error': 'Se requiere ip_address y acción (bloquear o permitir)'}), 400
-
-    if not verify_mikrotik_connection():
-        return jsonify({'error': 'No se pudo conectar al MikroTik'}), 502
-
-    firewall_url = f"{MIKROTIK_HOST}/rest/ip/firewall/filter"
+    
+    if not ip:
+        return jsonify({'error': 'La dirección IP es requerida'}), 400
+    
+    if accion not in ['bloquear', 'permitir']:
+        return jsonify({'error': 'Acción no válida. Use "bloquear" o "permitir"'}), 400
 
     try:
-        if accion == "bloquear":
-            logger.info(f"Bloqueando IP: {ip}")
-            response = requests.put(
-                firewall_url,
-                json={
-                    "chain": "forward",
-                    "src-address": ip,
-                    "action": "drop",
-                    "comment": "Bloqueado por API REST"
-                },
-                auth=HTTPBasicAuth(USERNAME, PASSWORD),
-                timeout=REQUEST_TIMEOUT
-            )
-            response.raise_for_status()
-            return jsonify({"message": f"Dispositivo con IP {ip} bloqueado correctamente"}), 200
+        api = get_api_connection()
+        reglas = api.path('ip', 'firewall', 'filter')
 
-        elif accion == "permitir":
-            logger.info(f"Desbloqueando IP: {ip}")
-            rules_response = requests.get(
-                firewall_url,
-                auth=HTTPBasicAuth(USERNAME, PASSWORD),
-                timeout=REQUEST_TIMEOUT
-            )
-            rules_response.raise_for_status()
-            reglas = rules_response.json()
-            eliminadas = 0
-
+        if accion == 'bloquear':
+            # Verificar si ya está bloqueada
             for regla in reglas:
-                if regla.get("src-address") == ip and regla.get("action") == "drop":
-                    rule_id = regla.get(".id")
-                    delete_url = f"{firewall_url}/{rule_id}"
-                    delete = requests.delete(
-                        delete_url,
-                        auth=HTTPBasicAuth(USERNAME, PASSWORD),
-                        timeout=REQUEST_TIMEOUT
-                    )
-                    delete.raise_for_status()
+                if regla.get('src-address') == ip and regla.get('action') == 'drop':
+                    return jsonify({'mensaje': f'La IP {ip} ya estaba bloqueada'}), 200
+
+            # Crear nueva regla de bloqueo
+            nueva_regla = reglas.add(
+                chain='forward',
+                src_address=ip,
+                action='drop',
+                comment='Bloqueo automático por API'
+            )
+            return jsonify({'mensaje': f'IP {ip} bloqueada exitosamente'}), 200
+
+        elif accion == 'permitir':
+            # Eliminar todas las reglas de bloqueo para esta IP
+            eliminadas = 0
+            for regla in reglas:
+                if regla.get('src-address') == ip and regla.get('action') == 'drop':
+                    reglas.remove(id=regla['.id'])
                     eliminadas += 1
 
-            return jsonify({"message": f"IP {ip} desbloqueada. Reglas eliminadas: {eliminadas}"}), 200
+            if eliminadas > 0:
+                return jsonify({'mensaje': f'IP {ip} desbloqueada ({eliminadas} reglas eliminadas)'}), 200
+            else:
+                return jsonify({'mensaje': f'No había reglas de bloqueo para {ip}'}), 200
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error al modificar reglas de firewall: {str(e)}")
-        return jsonify({'error': 'Fallo al modificar reglas de firewall: ' + str(e)}), 500
+    except Exception as e:
+        logger.error(f"Error en la operación: {str(e)}")
+        return jsonify({'error': 'Error en el servidor'}), 500
+    finally:
+        if 'api' in locals():
+            api.close()
 
-# =======================
-# Ruta de verificación de estado
-# =======================
-@app.route('/status', methods=['GET'])
-def service_status():
-    connection_ok = verify_mikrotik_connection()
-    return jsonify({
-        'service': 'api-bloquear-internet',
-        'mikrotik_host': MIKROTIK_HOST,
-        'mikrotik_connection': connection_ok,
-        'timestamp': datetime.datetime.now().isoformat()
-    }), 200 if connection_ok else 503
-
-# =======================
-# Iniciar servidor
-# =======================
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    logger.info(f"Iniciando servidor en el puerto {port}")
     app.run(host='0.0.0.0', port=port)
