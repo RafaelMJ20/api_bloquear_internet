@@ -18,13 +18,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def get_api_connection():
-    """Establece conexión con MikroTik"""
+    """Establece conexión con MikroTik a través del túnel Ngrok"""
     try:
+        logger.info(f"Intentando conectar a {MIKROTIK_API_HOST}:{API_PORT}")
         connection = connect(
             username=USERNAME,
             password=PASSWORD,
             host=MIKROTIK_API_HOST,
-            port=API_PORT
+            port=API_PORT,
+            timeout=10  # Aumentamos timeout para conexión via Ngrok
         )
         logger.info("Conexión exitosa a MikroTik")
         return connection
@@ -74,6 +76,7 @@ def control_internet():
                 action='drop',
                 comment='Bloqueo automático por API'
             )
+            logger.info(f"Regla de bloqueo creada para IP {ip}")
             return jsonify({'mensaje': f'IP {ip} bloqueada exitosamente'}), 200
 
         elif accion == 'permitir':
@@ -83,6 +86,7 @@ def control_internet():
                 if regla.get('src-address') == ip and regla.get('action') == 'drop':
                     reglas.remove(id=regla['.id'])
                     eliminadas += 1
+                    logger.info(f"Regla eliminada: {regla['.id']}")
 
             if eliminadas > 0:
                 return jsonify({'mensaje': f'IP {ip} desbloqueada ({eliminadas} reglas eliminadas)'}), 200
@@ -90,11 +94,20 @@ def control_internet():
                 return jsonify({'mensaje': f'No había reglas de bloqueo para {ip}'}), 200
 
     except Exception as e:
-        logger.error(f"Error en la operación: {str(e)}")
+        logger.error(f"Error en la operación: {str(e)}", exc_info=True)
         return jsonify({'error': 'Error en el servidor'}), 500
     finally:
         if 'api' in locals():
             api.close()
+
+@app.route('/status', methods=['GET'])
+def health_check():
+    """Endpoint para verificar estado del servicio"""
+    return jsonify({
+        'status': 'active',
+        'service': 'mikrotik-access-control',
+        'tunnel': MIKROTIK_API_HOST
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
