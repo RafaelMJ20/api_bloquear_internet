@@ -8,7 +8,7 @@ app = Flask(__name__)
 CORS(app)  # Permite CORS para todos los dominios
 
 # Configuración desde variables de entorno
-MIKROTIK_API_HOST = os.getenv('MIKROTIK_API_HOST', 'https://f12c-2605-59c8-74d2-e610-00-c8b.ngrok-free.app')
+MIKROTIK_API_HOST = os.getenv('MIKROTIK_API_HOST', 'f12c-2605-59c8-74d2-e610-00-c8b.ngrok-free.app')
 USERNAME = os.getenv('MIKROTIK_USERNAME', 'admin')
 PASSWORD = os.getenv('MIKROTIK_PASSWORD', '1234567890')
 API_PORT = int(os.getenv('MIKROTIK_API_PORT', '8728'))
